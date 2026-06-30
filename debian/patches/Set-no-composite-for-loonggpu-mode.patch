@@ -1,0 +1,119 @@
+Last-Update: 2025-09-16
+
+--- kwin-6.3.4.orig/src/kcms/compositing/compositing.ui
++++ kwin-6.3.4/src/kcms/compositing/compositing.ui
+@@ -63,14 +63,14 @@ you can reset this protection but be awa
+      </property>
+     </widget>
+    </item>
+-   <item row="2" column="1">
++   <!--item row="2" column="1">
+     <widget class="QCheckBox" name="kcfg_Enabled">
+      <property name="text">
+       <string>Enable on startup</string>
+      </property>
+     </widget>
+-   </item>
+-   <item row="3" column="1">
++   </item-->
++   <item row="2" column="1">
+     <widget class="QCheckBox" name="kcfg_WindowsBlockCompositing">
+      <property name="toolTip">
+       <string>Applications can set a hint to block compositing when the window is open.
+@@ -82,14 +82,14 @@ you can reset this protection but be awa
+      </property>
+     </widget>
+    </item>
+-   <item row="4" column="0">
++   <item row="3" column="0">
+     <widget class="QLabel" name="animationSpeedLabel">
+      <property name="text">
+       <string>Animation speed:</string>
+      </property>
+     </widget>
+    </item>
+-   <item row="4" column="1">
++   <item row="3" column="1">
+     <widget class="QWidget" name="animationSpeedControls" native="true">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+--- kwin-6.3.4.orig/src/kcms/compositing/main.cpp
++++ kwin-6.3.4/src/kcms/compositing/main.cpp
+@@ -78,8 +78,8 @@ KWinCompositingKCM::KWinCompositingKCM(Q
+     connect(reenableGlAction, &QAction::triggered, this, &KWinCompositingKCM::reenableGl);
+     connect(reenableGlAction, &QAction::triggered, m_form.glCrashedWarning, &KMessageWidget::animatedHide);
+     m_form.glCrashedWarning->addAction(reenableGlAction);
+-
+-    m_form.kcfg_Enabled->setVisible(!compositingRequired());
++    
++    //m_form.kcfg_Enabled->setVisible(!compositingRequired());
+     m_form.kcfg_WindowsBlockCompositing->setVisible(!compositingRequired());
+     m_form.compositingLabel->setVisible(!compositingRequired());
+ 
+--- kwin-6.3.4.orig/src/options.cpp
++++ kwin-6.3.4/src/options.cpp
+@@ -24,6 +24,9 @@
+ 
+ #endif // KCMRULES
+ 
++#include <iostream>
++#include <fstream>
++
+ namespace KWin
+ {
+ 
+@@ -748,40 +751,25 @@ void Options::loadConfig()
+     config = KConfigGroup(m_settings->config(), QStringLiteral("Compositing"));
+     bool useCompositing = false;
+     CompositingType compositingMode = NoCompositing;
+-    QString compositingBackend = config.readEntry("Backend", "OpenGL");
+-    if (compositingBackend == "QPainter") {
+-        compositingMode = QPainterCompositing;
++
++    QString compositingBackend;
++    std::ifstream fbFile("/proc/fb");
++    std::string fbContent;
++    if(fbFile.is_open()){
++	std::getline(fbFile, fbContent);
++	fbFile.close();
++    }
++    if ((fbContent == "0 loongdcdrmfb") || (fbContent == "0 gsgpudrmfb") || (fbContent == "0 loongsondrmfb") || (fbContent == "0 EFI VGA")) {
++        compositingMode = NoCompositing;
++        compositingBackend = config.readEntry("Backend", "QPainter");
++        setUseCompositing(false);
+     } else {
++        compositingBackend = config.readEntry("Backend", "OpenGL");
++        setUseCompositing(true);
+         compositingMode = OpenGLCompositing;
+     }
+ 
+-    if (const char *c = getenv("KWIN_COMPOSE")) {
+-        switch (c[0]) {
+-        case 'O':
+-            qCDebug(KWIN_CORE) << "Compositing forced to OpenGL mode by environment variable";
+-            compositingMode = OpenGLCompositing;
+-            useCompositing = true;
+-            break;
+-        case 'Q':
+-            qCDebug(KWIN_CORE) << "Compositing forced to QPainter mode by environment variable";
+-            compositingMode = QPainterCompositing;
+-            useCompositing = true;
+-            break;
+-        case 'N':
+-            if (getenv("KDE_FAILSAFE")) {
+-                qCDebug(KWIN_CORE) << "Compositing disabled forcefully by KDE failsafe mode";
+-            } else {
+-                qCDebug(KWIN_CORE) << "Compositing disabled forcefully by environment variable";
+-            }
+-            compositingMode = NoCompositing;
+-            break;
+-        default:
+-            qCDebug(KWIN_CORE) << "Unknown KWIN_COMPOSE mode set, ignoring";
+-            break;
+-        }
+-    }
+     setCompositingMode(compositingMode);
+-    setUseCompositing(useCompositing || config.readEntry("Enabled", Options::defaultUseCompositing()));
+ 
+     setGlSmoothScale(std::clamp(config.readEntry("GLTextureFilter", Options::defaultGlSmoothScale()), -1, 2));
+     setGlStrictBindingFollowsDriver(!config.hasKey("GLStrictBinding"));
