@@ -52,6 +52,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
+#include <QStringList>
 // xcb
 #include <xcb/xcb_icccm.h>
 // system
@@ -65,6 +66,33 @@
 
 namespace KWin
 {
+
+static QString configureRequestMaskToString(uint16_t valueMask)
+{
+    QStringList flags;
+    if (valueMask & XCB_CONFIG_WINDOW_X) {
+        flags.push_back(QStringLiteral("X"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_Y) {
+        flags.push_back(QStringLiteral("Y"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_WIDTH) {
+        flags.push_back(QStringLiteral("Width"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_HEIGHT) {
+        flags.push_back(QStringLiteral("Height"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_BORDER_WIDTH) {
+        flags.push_back(QStringLiteral("BorderWidth"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_SIBLING) {
+        flags.push_back(QStringLiteral("Sibling"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_STACK_MODE) {
+        flags.push_back(QStringLiteral("StackMode"));
+    }
+    return flags.isEmpty() ? QStringLiteral("<none>") : flags.join(QLatin1Char('|'));
+}
 
 static uint32_t frameEventMask()
 {
@@ -3954,6 +3982,35 @@ void X11Window::sendSyntheticConfigureNotify()
     u.event.border_width = 0;
     u.event.above_sibling = XCB_WINDOW_NONE;
     u.event.override_redirect = 0;
+    const uint64_t debugSequence = ++m_debugGeometrySequence;
+    const QPointF sendPosition = QPointF(Xcb::fromXNative(c.x), Xcb::fromXNative(c.y));
+    const QSizeF sendSize = QSizeF(Xcb::fromXNative(c.width), Xcb::fromXNative(c.height));
+    const QPointF cursorPosition = Cursors::self()->mouse()->pos();
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=SCN_SEND"
+                       << "seq=" << debugSequence
+                       << "crSeq=" << m_debugCurrentConfigureRequestSequence
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "target=0x" << Qt::hex << window()
+                       << Qt::dec
+                       << "send=(" << c.x << c.y << c.width << c.height << ")"
+                       << "frame=" << m_frame
+                       << "wrapper=" << m_wrapper
+                       << "client=" << m_client
+                       << "frameGeometry=" << frameGeometry()
+                       << "clientGeometry=" << clientGeometry()
+                       << "moveResizeGeometry=" << moveResizeGeometry()
+                       << "decorated=" << isDecorated()
+                       << "cursor=" << cursorPosition
+                       << "borders=(" << borderLeft() << borderTop() << borderRight() << borderBottom() << ")";
+    m_debugLastSyntheticConfigureNotify = DebugSyntheticConfigureNotify{
+        .sequence = debugSequence,
+        .clientPosition = sendPosition,
+        .clientSize = sendSize,
+        .clientGeometry = clientGeometry(),
+        .frameGeometry = frameGeometry(),
+        .cursorPosition = cursorPosition,
+    };
     xcb_send_event(kwinApp()->x11Connection(), true, c.event, XCB_EVENT_MASK_STRUCTURE_NOTIFY, reinterpret_cast<const char *>(&u));
     xcb_flush(kwinApp()->x11Connection());
 }
@@ -4075,14 +4132,43 @@ void X11Window::configureRequest(int value_mask, qreal rx, qreal ry, qreal rw, q
     const int configureSizeMask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
     const int configureGeometryMask = configurePositionMask | configureSizeMask;
 
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_PROCESS_BEGIN"
+                       << "seq=" << m_debugCurrentConfigureRequestSequence
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "mask=" << configureRequestMaskToString(value_mask)
+                       << "request=(" << rx << ry << rw << rh << ")"
+                       << "gravityArg=" << gravity
+                       << "fromTool=" << from_tool
+                       << "frameGeometry=" << frameGeometry()
+                       << "clientGeometry=" << clientGeometry()
+                       << "moveResizeGeometry=" << moveResizeGeometry()
+                       << "pos=" << pos()
+                       << "clientSize=" << clientSize()
+                       << "size=" << size()
+                       << "maxMode=" << int(requestedMaximizeMode())
+                       << "quickTile=" << int(requestedQuickTileMode())
+                       << "appNoBorder=" << app_noborder
+                       << "decorated=" << isDecorated()
+                       << "special=" << isSpecialWindow()
+                       << "toolbar=" << isToolbar()
+                       << "fullscreen=" << isFullScreen()
+                       << "borders=(" << borderLeft() << borderTop() << borderRight() << borderBottom() << ")";
+
     // "maximized" is a user setting -> we do not allow the client to resize itself
     // away from this & against the users explicit wish
     qCDebug(KWIN_CORE) << this << bool(value_mask & configureGeometryMask) << bool(requestedMaximizeMode() & MaximizeVertical) << bool(requestedMaximizeMode() & MaximizeHorizontal);
 
     // we want to (partially) ignore the request when the window is somehow maximized or quicktiled
     bool ignore = !app_noborder && (requestedQuickTileMode() != QuickTileMode(QuickTileFlag::None) || requestedMaximizeMode() != MaximizeRestore);
+    const bool ignoreBeforeRules = ignore;
     // however, the user shall be able to force obedience despite and also disobedience in general
     ignore = rules()->checkIgnoreGeometry(ignore);
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_IGNORE_DECISION"
+                       << "seq=" << m_debugCurrentConfigureRequestSequence
+                       << "ignoreBeforeRules=" << ignoreBeforeRules
+                       << "ignoreAfterRules=" << ignore
+                       << "mask=" << configureRequestMaskToString(value_mask);
     if (!ignore) { // either we're not max'd / q'tiled or the user allowed the client to break that - so break it.
         updateQuickTileMode(QuickTileFlag::None);
         Q_EMIT quickTileModeChanged();
@@ -4103,30 +4189,59 @@ void X11Window::configureRequest(int value_mask, qreal rx, qreal ry, qreal rw, q
             if (!(value_mask & configureGeometryMask)) {
                 ignore = true; // the modification turned the request void
             }
+            qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_PARTIAL_MAXIMIZE_FIX"
+                               << "seq=" << m_debugCurrentConfigureRequestSequence
+                               << "ignore=" << ignore
+                               << "mask=" << configureRequestMaskToString(value_mask);
         }
     }
 
     if (ignore) {
-        qCDebug(KWIN_CORE) << "DENIED";
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_DENIED"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence;
         return; // nothing to (left) to do for use - bugs #158974, #252314, #321491
     }
 
-    qCDebug(KWIN_CORE) << "PERMITTED" << this << bool(value_mask & configureGeometryMask);
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_PERMITTED"
+                       << "seq=" << m_debugCurrentConfigureRequestSequence
+                       << this << bool(value_mask & configureGeometryMask);
 
     if (gravity == 0) { // default (nonsense) value for the argument
         gravity = m_geometryHints.windowGravity();
     }
     if (value_mask & configurePositionMask) {
         QPointF new_pos = framePosToClientPos(pos());
-        new_pos -= gravityAdjustment(xcb_gravity_t(gravity));
+        const QPointF currentClientPos = new_pos;
+        const QPointF gravityOffset = gravityAdjustment(xcb_gravity_t(gravity));
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_CONVERT_0"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "gravity=" << gravity
+                           << "currentFramePos=" << pos()
+                           << "currentClientPos=" << currentClientPos
+                           << "gravityOffset=" << gravityOffset;
+        new_pos -= gravityOffset;
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_CONVERT_1_BEFORE_REPLACE"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "newPos=" << new_pos;
         if (value_mask & XCB_CONFIG_WINDOW_X) {
             new_pos.setX(rx);
         }
         if (value_mask & XCB_CONFIG_WINDOW_Y) {
             new_pos.setY(ry);
         }
-        new_pos += gravityAdjustment(xcb_gravity_t(gravity));
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_CONVERT_2_AFTER_REPLACE"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "newPos=" << new_pos
+                           << "usedX=" << bool(value_mask & XCB_CONFIG_WINDOW_X)
+                           << "usedY=" << bool(value_mask & XCB_CONFIG_WINDOW_Y);
+        new_pos += gravityOffset;
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_CONVERT_3_AFTER_GRAVITY"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "newPos=" << new_pos;
         new_pos = clientPosToFramePos(new_pos);
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_CONVERT_4_FRAME_POS"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "newFramePos=" << new_pos;
 
         qreal nw = clientSize().width();
         qreal nh = clientSize().height();
@@ -4139,19 +4254,48 @@ void X11Window::configureRequest(int value_mask, qreal rx, qreal ry, qreal rw, q
         const QSizeF requestedClientSize = constrainClientSize(QSizeF(nw, nh));
         QSizeF requestedFrameSize = clientSizeToFrameSize(requestedClientSize);
         requestedFrameSize = rules()->checkSize(requestedFrameSize);
+        const QPointF beforeRulesPos = new_pos;
         new_pos = rules()->checkPosition(new_pos);
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_SIZE_RULES"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "requestedClientSize=" << requestedClientSize
+                           << "requestedFrameSize=" << requestedFrameSize
+                           << "beforeRulesPos=" << beforeRulesPos
+                           << "afterRulesPos=" << new_pos;
 
         Output *newOutput = workspace()->outputAt(QRectF(new_pos, requestedFrameSize).center());
-        if (newOutput != rules()->checkOutput(newOutput)) {
+        Output *checkedOutput = rules()->checkOutput(newOutput);
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_OUTPUT_CHECK"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "candidateOutput=" << newOutput
+                           << "checkedOutput=" << checkedOutput
+                           << "geometryCenter=" << QRectF(new_pos, requestedFrameSize).center();
+        if (newOutput != checkedOutput) {
+            qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_DENIED reason=output-rule"
+                               << "seq=" << m_debugCurrentConfigureRequestSequence;
             return; // not allowed by rule
         }
 
         QRectF geometry = QRectF(new_pos, requestedFrameSize);
         const QRectF area = workspace()->clientArea(WorkArea, this, geometry.center());
+        const QRectF beforeKeepInArea = geometry;
+        const bool keepInAreaApplies = !from_tool && (!isSpecialWindow() || isToolbar()) && !isFullScreen() && area.contains(clientGeometry());
         if (!from_tool && (!isSpecialWindow() || isToolbar()) && !isFullScreen() && area.contains(clientGeometry())) {
             geometry = keepInArea(geometry, area);
         }
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_KEEP_IN_AREA"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "applies=" << keepInAreaApplies
+                           << "area=" << area
+                           << "before=" << beforeKeepInArea
+                           << "after=" << geometry
+                           << "clientGeometry=" << clientGeometry();
 
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_FINAL_GEOMETRY"
+                           << "seq=" << m_debugCurrentConfigureRequestSequence
+                           << "geometry=" << geometry
+                           << "deltaVsFrame=" << (geometry.topLeft() - frameGeometry().topLeft())
+                           << "requestClientPos=" << QPointF(rx, ry);
         moveResize(geometry);
 
         // this is part of the kicker-xinerama-hack... it should be
@@ -4189,6 +4333,11 @@ void X11Window::configureRequest(int value_mask, qreal rx, qreal ry, qreal rw, q
                     geometry = keepInArea(geometry, area);
                 }
             }
+            qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_PURE_RESIZE_FINAL"
+                               << "seq=" << m_debugCurrentConfigureRequestSequence
+                               << "geometry=" << geometry
+                               << "requestedClientSize=" << requestedClientSize
+                               << "requestedFrameSize=" << requestedFrameSize;
             moveResize(geometry);
         }
     }

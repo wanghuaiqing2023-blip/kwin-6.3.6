@@ -1177,6 +1177,18 @@ bool Window::startInteractiveMoveResize()
     m_interactiveMoveResize.initialMaximizeMode = requestedMaximizeMode();
     m_interactiveMoveResize.initialQuickTileMode = requestedQuickTileMode();
     m_interactiveMoveResize.initialGeometryRestore = geometryRestore();
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=IMR_START"
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "gravity=" << int(interactiveMoveResizeGravity())
+                       << "anchor=" << interactiveMoveResizeAnchor()
+                       << "offset=" << interactiveMoveOffset()
+                       << "initialFrameGeometry=" << frameGeometry()
+                       << "initialClientGeometry=" << clientGeometry()
+                       << "initialMoveResizeGeometry=" << moveResizeGeometry()
+                       << "startOutput=" << m_interactiveMoveResize.startOutput
+                       << "maxMode=" << int(requestedMaximizeMode())
+                       << "quickTile=" << int(requestedQuickTileMode());
 
     updateElectricGeometryRestore();
     checkUnrestrictedInteractiveMoveResize();
@@ -1315,6 +1327,18 @@ void Window::updateInteractiveMoveResize(const QPointF &global, Qt::KeyboardModi
 {
     setInteractiveMoveResizeAnchor(global);
     setInteractiveMoveResizeModifiers(modifiers);
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=IMR_UPDATE"
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "global=" << global
+                       << "modifiers=" << modifiers
+                       << "currentMoveResizeGeometry=" << moveResizeGeometry()
+                       << "frameGeometry=" << frameGeometry()
+                       << "offset=" << interactiveMoveOffset()
+                       << "anchor=" << interactiveMoveResizeAnchor()
+                       << "gravity=" << int(interactiveMoveResizeGravity())
+                       << "interactiveMove=" << isInteractiveMove()
+                       << "interactiveResize=" << isInteractiveResize();
 
     // ShadeHover or ShadeActive, ShadeNormal was already avoided above
     const Gravity gravity = interactiveMoveResizeGravity();
@@ -1812,13 +1836,25 @@ QRectF Window::nextInteractiveMoveGeometry(const QPointF &global) const
     QRectF nextMoveResizeGeom = currentMoveResizeGeom;
     nextMoveResizeGeom.moveTopLeft(QPointF(global.x() - interactiveMoveOffset().x() * currentMoveResizeGeom.width(),
                                            global.y() - interactiveMoveOffset().y() * currentMoveResizeGeom.height()));
+    const QPointF beforeAdjust = nextMoveResizeGeom.topLeft();
     nextMoveResizeGeom.moveTopLeft(workspace()->adjustWindowPosition(this, nextMoveResizeGeom.topLeft(), isUnrestrictedInteractiveMoveResize()));
+    const QPointF afterAdjust = nextMoveResizeGeom.topLeft();
 
     if (!isUnrestrictedInteractiveMoveResize()) {
         if (const auto anchor = confineInteractiveMove(nextMoveResizeGeom, 100, titlebarThickness())) {
             nextMoveResizeGeom.moveTopLeft(anchor.value());
         }
     }
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=IMR_NEXT"
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "global=" << global
+                       << "currentFrameGeometry=" << currentMoveResizeGeom
+                       << "offset=" << interactiveMoveOffset()
+                       << "beforeAdjust=" << beforeAdjust
+                       << "afterAdjust=" << afterAdjust
+                       << "finalGeometry=" << nextMoveResizeGeom
+                       << "unrestricted=" << isUnrestrictedInteractiveMoveResize();
 
     return nextMoveResizeGeom;
 }
@@ -3579,8 +3615,24 @@ void Window::moveResize(const QRectF &rect)
         return;
     }
 
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=MR_ENTRY"
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "rect=" << rect
+                       << "oldFrameGeometry=" << frameGeometry()
+                       << "oldClientGeometry=" << clientGeometry()
+                       << "oldMoveResizeGeometry=" << moveResizeGeometry()
+                       << "interactive=" << isInteractiveMoveResize()
+                       << "interactiveMove=" << isInteractiveMove()
+                       << "interactiveResize=" << isInteractiveResize();
     setMoveResizeGeometry(rect);
     moveResizeInternal(rect, MoveResizeMode::MoveResize);
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=MR_AFTER"
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "frameGeometry=" << frameGeometry()
+                       << "clientGeometry=" << clientGeometry()
+                       << "moveResizeGeometry=" << moveResizeGeometry();
 }
 
 void Window::setElectricBorderMode(std::optional<ElectricBorderMode> mode)

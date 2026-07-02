@@ -43,6 +43,7 @@
 #include <QHoverEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QStringList>
 #include <QStyleHints>
 #include <QWheelEvent>
 
@@ -71,6 +72,33 @@ typedef struct xcb_ge_generic_event_t
 
 namespace KWin
 {
+
+static QString configureRequestMaskToString(uint16_t valueMask)
+{
+    QStringList flags;
+    if (valueMask & XCB_CONFIG_WINDOW_X) {
+        flags.push_back(QStringLiteral("X"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_Y) {
+        flags.push_back(QStringLiteral("Y"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_WIDTH) {
+        flags.push_back(QStringLiteral("Width"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_HEIGHT) {
+        flags.push_back(QStringLiteral("Height"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_BORDER_WIDTH) {
+        flags.push_back(QStringLiteral("BorderWidth"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_SIBLING) {
+        flags.push_back(QStringLiteral("Sibling"));
+    }
+    if (valueMask & XCB_CONFIG_WINDOW_STACK_MODE) {
+        flags.push_back(QStringLiteral("StackMode"));
+    }
+    return flags.isEmpty() ? QStringLiteral("<none>") : flags.join(QLatin1Char('|'));
+}
 
 // ****************************************
 // Workspace
@@ -151,24 +179,63 @@ bool Workspace::workspaceEvent(xcb_generic_event_t *e)
     const uint8_t eventType = e->response_type & ~0x80;
 
     const xcb_window_t eventWindow = findEventWindow(e);
+    if (eventType == XCB_CONFIGURE_REQUEST) {
+        const auto *event = reinterpret_cast<xcb_configure_request_event_t *>(e);
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_CONFIGURE_REQUEST"
+                           << "eventWindow=0x" << Qt::hex << eventWindow
+                           << "parent=0x" << event->parent
+                           << "window=0x" << event->window
+                           << Qt::dec
+                           << "mask=" << configureRequestMaskToString(event->value_mask)
+                           << "raw=(" << event->x << event->y << event->width << event->height << ")"
+                           << "sibling=0x" << Qt::hex << event->sibling << Qt::dec
+                           << "stackMode=" << event->stack_mode
+                           << "detail=" << event->detail;
+    }
     if (eventWindow != XCB_WINDOW_NONE) {
         if (X11Window *window = findClient(Predicate::WindowMatch, eventWindow)) {
+            if (eventType == XCB_CONFIGURE_REQUEST) {
+                qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_MATCH"
+                                   << "kind=WindowMatch"
+                                   << "window=0x" << Qt::hex << window->window()
+                                   << "frame=0x" << window->frameId()
+                                   << "wrapper=0x" << window->wrapperId()
+                                   << "input=0x" << window->inputId() << Qt::dec
+                                   << "caption=" << window->caption()
+                                   << "frameGeometry=" << window->frameGeometry()
+                                   << "clientGeometry=" << window->clientGeometry()
+                                   << "moveResizeGeometry=" << window->moveResizeGeometry()
+                                   << "interactiveMove=" << window->isInteractiveMove()
+                                   << "interactiveResize=" << window->isInteractiveResize();
+            }
             if (window->windowEvent(e)) {
                 return true;
             }
         } else if (X11Window *window = findClient(Predicate::WrapperIdMatch, eventWindow)) {
+            if (eventType == XCB_CONFIGURE_REQUEST) {
+                qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_MATCH kind=WrapperIdMatch" << window << window->caption();
+            }
             if (window->windowEvent(e)) {
                 return true;
             }
         } else if (X11Window *window = findClient(Predicate::FrameIdMatch, eventWindow)) {
+            if (eventType == XCB_CONFIGURE_REQUEST) {
+                qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_MATCH kind=FrameIdMatch" << window << window->caption();
+            }
             if (window->windowEvent(e)) {
                 return true;
             }
         } else if (X11Window *window = findClient(Predicate::InputIdMatch, eventWindow)) {
+            if (eventType == XCB_CONFIGURE_REQUEST) {
+                qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_MATCH kind=InputIdMatch" << window << window->caption();
+            }
             if (window->windowEvent(e)) {
                 return true;
             }
         } else if (X11Window *window = findUnmanaged(eventWindow)) {
+            if (eventType == XCB_CONFIGURE_REQUEST) {
+                qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=WS_MATCH kind=Unmanaged" << window << window->caption();
+            }
             if (window->windowEvent(e)) {
                 return true;
             }
@@ -701,19 +768,64 @@ void X11Window::configureNotifyEvent(xcb_configure_notify_event_t *e)
  */
 void X11Window::configureRequestEvent(xcb_configure_request_event_t *e)
 {
+    const uint64_t debugSequence = ++m_debugGeometrySequence;
+    m_debugCurrentConfigureRequestSequence = debugSequence;
+    const QPointF rawPosition = QPointF(Xcb::fromXNative(e->x), Xcb::fromXNative(e->y));
+    const bool hasPosition = e->value_mask & (XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y);
+    const QPointF cursorPosition = Cursors::self()->mouse()->pos();
+    const QRect workspaceGeometry = workspace()->geometry();
+
+    qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_EVENT"
+                       << "seq=" << debugSequence
+                       << "this=" << this
+                       << "caption=" << caption()
+                       << "window=0x" << Qt::hex << window()
+                       << "eventWindow=0x" << e->window
+                       << "parent=0x" << e->parent
+                       << Qt::dec
+                       << "mask=" << configureRequestMaskToString(e->value_mask)
+                       << "raw=(" << e->x << e->y << e->width << e->height << ")"
+                       << "frameGeometry=" << frameGeometry()
+                       << "clientGeometry=" << clientGeometry()
+                       << "moveResizeGeometry=" << moveResizeGeometry()
+                       << "cursor=" << cursorPosition
+                       << "workspaceGeometry=" << workspaceGeometry
+                       << "rawOutsideWorkspace=" << (hasPosition && !workspaceGeometry.contains(rawPosition.toPoint()))
+                       << "deltaVsClientGeometry=" << (rawPosition - clientGeometry().topLeft())
+                       << "interactiveMove=" << isInteractiveMove()
+                       << "interactiveResize=" << isInteractiveResize()
+                       << "fullscreen=" << isFullScreen()
+                       << "splash=" << isSplash();
+    if (m_debugLastSyntheticConfigureNotify) {
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_AFTER_LAST_SCN"
+                           << "seq=" << debugSequence
+                           << "lastScnSeq=" << m_debugLastSyntheticConfigureNotify->sequence
+                           << "rawPosition=" << rawPosition
+                           << "lastSendPosition=" << m_debugLastSyntheticConfigureNotify->clientPosition
+                           << "deltaRawVsLastSend=" << (rawPosition - m_debugLastSyntheticConfigureNotify->clientPosition)
+                           << "lastSendClientSize=" << m_debugLastSyntheticConfigureNotify->clientSize
+                           << "lastSendClientGeometry=" << m_debugLastSyntheticConfigureNotify->clientGeometry
+                           << "lastSendFrameGeometry=" << m_debugLastSyntheticConfigureNotify->frameGeometry
+                           << "cursor=" << cursorPosition
+                           << "deltaCursorVsLastScnCursor=" << (cursorPosition - m_debugLastSyntheticConfigureNotify->cursorPosition);
+    }
     if (e->window != window()) {
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_EVENT_IGNORED reason=non-client-window";
         return; // ignore frame/wrapper
     }
     if (isInteractiveResize() || isInteractiveMove()) {
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_EVENT_IGNORED reason=interactive-move-resize";
         return; // we have better things to do right now
     }
 
     if (m_fullscreenMode == FullScreenNormal) { // refuse resizing of fullscreen windows
         // but allow resizing fullscreen hacks in order to let them cancel fullscreen mode
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_EVENT_REFUSED reason=fullscreen";
         sendSyntheticConfigureNotify();
         return;
     }
     if (isSplash()) { // no manipulations with splashscreens either
+        qCDebug(KWIN_CORE) << "KWIN_X11_DRAG phase=CR_EVENT_REFUSED reason=splash";
         sendSyntheticConfigureNotify();
         return;
     }

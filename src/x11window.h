@@ -28,6 +28,9 @@
 // X
 #include <NETWM>
 #include <xcb/sync.h>
+// std
+#include <cstdint>
+#include <optional>
 
 // TODO: Cleanup the order of things in this .h file
 
@@ -459,6 +462,18 @@ private:
 
     Xcb::GeometryHints m_geometryHints;
     void sendSyntheticConfigureNotify();
+    struct DebugSyntheticConfigureNotify {
+        uint64_t sequence = 0;
+        QPointF clientPosition;
+        QSizeF clientSize;
+        QRectF clientGeometry;
+        QRectF frameGeometry;
+        QPointF cursorPosition;
+    };
+    uint64_t m_debugGeometrySequence = 0;
+    uint64_t m_debugCurrentConfigureRequestSequence = 0;
+    std::optional<DebugSyntheticConfigureNotify> m_debugLastSyntheticConfigureNotify;
+
     enum MappingState {
         Withdrawn, ///< Not handled, as per ICCCM WithdrawnState
         Mapped, ///< The frame is mapped
