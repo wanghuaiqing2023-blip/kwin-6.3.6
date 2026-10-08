@@ -4218,6 +4218,17 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
         }
     }
 
+    // Output geometry and panel struts can be updated independently. If the
+    // resulting bounds leave no usable area, keep the translated position and
+    // size instead of applying contradictory edge corrections.
+    if (bottomMax <= topMax || rightMax <= leftMax) {
+        qCWarning(KWIN_CORE) << "Ignoring invalid workspace bounds for" << this
+                            << "left=" << leftMax << "right=" << rightMax
+                            << "top=" << topMax << "bottom=" << bottomMax;
+        move(newGeom.topLeft());
+        return;
+    }
+
     // Check if the sides were inside or touching but are no longer
     enum {
         Left = 0,
