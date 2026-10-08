@@ -3552,6 +3552,14 @@ QRectF Window::moveResizeGeometry() const
 
 void Window::setMoveResizeGeometry(const QRectF &geo)
 {
+    static const bool traceEnabled = qEnvironmentVariableIntValue("KWIN_WORKSPACE_POSITION_TRACE") == 1;
+    if (traceEnabled && geo != m_moveResizeGeometry) {
+        qInfo() << "KWIN_GEOMETRY_TRACE phase=REQUEST" << "win=" << this
+                << "before=" << m_moveResizeGeometry << "after=" << geo
+                << "frame=" << frameGeometry()
+                << "shrinksWidth=" << (geo.width() < m_moveResizeGeometry.width())
+                << "shrinksHeight=" << (geo.height() < m_moveResizeGeometry.height());
+    }
     m_moveResizeGeometry = geo;
     setMoveResizeOutput(workspace()->outputAt(geo.center()));
 }
@@ -4101,6 +4109,33 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
 
     QRectF newGeom = moveResizeGeometry();
 
+    static const bool traceEnabled = qEnvironmentVariableIntValue("KWIN_WORKSPACE_POSITION_TRACE") == 1;
+    static quint64 callCounter = 0;
+    const quint64 callId = traceEnabled ? ++callCounter : 0;
+    const auto trace = [this, callId](const char *phase, const QRectF &candidate) {
+        if (traceEnabled) {
+            qInfo() << "KWIN_GEOMETRY_TRACE" << "call=" << callId << "win=" << this
+                    << "phase=" << phase << "candidate=" << candidate
+                    << "requested=" << moveResizeGeometry() << "frame=" << frameGeometry();
+        }
+    };
+    const auto traceStrut = [this, callId](const char *phase, int side, const QRect &strut, const QRect &intersection) {
+        if (traceEnabled) {
+            qInfo() << "KWIN_GEOMETRY_TRACE" << "call=" << callId << "win=" << this
+                    << "phase=" << phase << "side=" << side
+                    << "strut=" << strut << "intersection=" << intersection;
+        }
+    };
+    trace("ENTER", newGeom);
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE" << "call=" << callId << "win=" << this
+                << "phase=STATE" << "inRearrange=" << workspace()->inRearrange()
+                << "oldGeometryArgument=" << oldGeometry
+                << "fullscreen=" << isRequestedFullScreen()
+                << "maximize=" << int(requestedMaximizeMode())
+                << "quickTile=" << int(requestedQuickTileMode()) << "shade=" << isShade();
+    }
+
     if (!oldGeometry.isValid()) {
         oldGeometry = newGeom;
     }
@@ -4133,8 +4168,17 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
         screenArea = workspace()->clientArea(ScreenArea, this, newGeom.center()).toRect();
     }
 
+    trace("TRANSLATED", newGeom);
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE" << "call=" << callId << "win=" << this
+                << "phase=SCREENS" << "old=" << oldScreenArea << "new=" << screenArea
+                << "moveResizeOutput=" << static_cast<const void *>(moveResizeOutput());
+    }
+
     if (isRequestedFullScreen() || requestedMaximizeMode() != MaximizeRestore || requestedQuickTileMode() != QuickTileMode(QuickTileFlag::None)) {
+        trace("SPECIAL_BEFORE", newGeom);
         moveResize(ensureSpecialStateGeometry(newGeom));
+        trace("SPECIAL_AFTER", moveResizeGeometry());
         setFullscreenGeometryRestore(moveToArea(m_fullscreenGeometryRestore, oldScreenArea, screenArea));
         setGeometryRestore(moveToArea(m_maximizeGeometryRestore, oldScreenArea, screenArea));
         return;
@@ -4162,6 +4206,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto oldStrutsTop = (workspace()->*moveAreaFunc)(oldDesktop, StrutAreaTop);
     for (const QRect &r : oldStrutsTop) {
         QRect rect = r & oldGeomTall;
+        traceStrut("OLD_STRUT", StrutAreaTop, r, rect);
         if (!rect.isEmpty()) {
             oldTopMax = std::max(oldTopMax, rect.y() + rect.height());
         }
@@ -4169,6 +4214,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto oldStrutsRight = (workspace()->*moveAreaFunc)(oldDesktop, StrutAreaRight);
     for (const QRect &r : oldStrutsRight) {
         QRect rect = r & oldGeomWide;
+        traceStrut("OLD_STRUT", StrutAreaRight, r, rect);
         if (!rect.isEmpty()) {
             oldRightMax = std::min(oldRightMax, rect.x());
         }
@@ -4176,6 +4222,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto oldStrutsBottom = (workspace()->*moveAreaFunc)(oldDesktop, StrutAreaBottom);
     for (const QRect &r : oldStrutsBottom) {
         QRect rect = r & oldGeomTall;
+        traceStrut("OLD_STRUT", StrutAreaBottom, r, rect);
         if (!rect.isEmpty()) {
             oldBottomMax = std::min(oldBottomMax, rect.y());
         }
@@ -4183,6 +4230,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto oldStrutsLeft = (workspace()->*moveAreaFunc)(oldDesktop, StrutAreaLeft);
     for (const QRect &r : oldStrutsLeft) {
         QRect rect = r & oldGeomWide;
+        traceStrut("OLD_STRUT", StrutAreaLeft, r, rect);
         if (!rect.isEmpty()) {
             oldLeftMax = std::max(oldLeftMax, rect.x() + rect.width());
         }
@@ -4192,6 +4240,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto newStrutsTop = workspace()->restrictedMoveArea(desktop, StrutAreaTop);
     for (const QRect &r : newStrutsTop) {
         QRect rect = r & newGeomTall;
+        traceStrut("NEW_STRUT", StrutAreaTop, r, rect);
         if (!rect.isEmpty()) {
             topMax = std::max(topMax, rect.y() + rect.height());
         }
@@ -4199,6 +4248,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto newStrutsRight = workspace()->restrictedMoveArea(desktop, StrutAreaRight);
     for (const QRect &r : newStrutsRight) {
         QRect rect = r & newGeomWide;
+        traceStrut("NEW_STRUT", StrutAreaRight, r, rect);
         if (!rect.isEmpty()) {
             rightMax = std::min(rightMax, rect.x());
         }
@@ -4206,6 +4256,7 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto newStrutsBottom = workspace()->restrictedMoveArea(desktop, StrutAreaBottom);
     for (const QRect &r : newStrutsBottom) {
         QRect rect = r & newGeomTall;
+        traceStrut("NEW_STRUT", StrutAreaBottom, r, rect);
         if (!rect.isEmpty()) {
             bottomMax = std::min(bottomMax, rect.y());
         }
@@ -4213,9 +4264,19 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
     const auto newStrutsLeft = workspace()->restrictedMoveArea(desktop, StrutAreaLeft);
     for (const QRect &r : newStrutsLeft) {
         QRect rect = r & newGeomWide;
+        traceStrut("NEW_STRUT", StrutAreaLeft, r, rect);
         if (!rect.isEmpty()) {
             leftMax = std::max(leftMax, rect.x() + rect.width());
         }
+    }
+
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE" << "call=" << callId << "win=" << this
+                << "phase=BOUNDS" << "left=" << leftMax << "right=" << rightMax
+                << "top=" << topMax << "bottom=" << bottomMax
+                << "widthSpan=" << (rightMax - leftMax) << "heightSpan=" << (bottomMax - topMax)
+                << "oldLeft=" << oldLeftMax << "oldRight=" << oldRightMax
+                << "oldTop=" << oldTopMax << "oldBottom=" << oldBottomMax;
     }
 
     // Output geometry and panel struts can be updated independently. If the
@@ -4225,7 +4286,9 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
         qCWarning(KWIN_CORE) << "Ignoring invalid workspace bounds for" << this
                             << "left=" << leftMax << "right=" << rightMax
                             << "top=" << topMax << "bottom=" << bottomMax;
+        trace("GUARD_BEFORE_MOVE", newGeom);
         move(newGeom.topLeft());
+        trace("GUARD_AFTER_MOVE", moveResizeGeometry());
         return;
     }
 
@@ -4276,31 +4339,43 @@ void Window::checkWorkspacePosition(QRectF oldGeometry, const VirtualDesktop *ol
 
     if (save[Left] || keep[Left]) {
         newGeom.moveLeft(std::max(leftMax, screenArea.x()));
+        trace("MOVE_LEFT", newGeom);
     }
     if (save[Top] || keep[Top]) {
         newGeom.moveTop(std::max(topMax, screenArea.y()));
+        trace("MOVE_TOP", newGeom);
     }
     if (save[Right] || keep[Right]) {
         newGeom.moveRight(std::min(rightMax, screenArea.right()) + 1);
+        trace("MOVE_RIGHT", newGeom);
     }
     if (save[Bottom] || keep[Bottom]) {
         newGeom.moveBottom(std::min(bottomMax, screenArea.bottom()) + 1);
+        trace("MOVE_BOTTOM", newGeom);
     }
 
     if (oldGeometry.x() >= oldLeftMax && newGeom.x() < leftMax) {
         newGeom.setLeft(std::max(leftMax, screenArea.x()));
+        trace("SET_LEFT", newGeom);
     }
     if (oldGeometry.y() >= oldTopMax && newGeom.y() < topMax) {
         newGeom.setTop(std::max(topMax, screenArea.y()));
+        trace("SET_TOP", newGeom);
     }
 
     checkOffscreenPosition(&newGeom, screenArea);
+    trace("OFFSCREEN", newGeom);
     // Obey size hints. TODO: We really should make sure it stays in the right place
     if (!isShade()) {
+        trace("HINTS_BEFORE", newGeom);
         newGeom.setSize(constrainFrameSize(newGeom.size()));
+        trace("HINTS_AFTER", newGeom);
     }
 
-    moveResize(m_rules.checkGeometry(newGeom));
+    const QRectF ruledGeom = m_rules.checkGeometry(newGeom);
+    trace("RULES", ruledGeom);
+    moveResize(ruledGeom);
+    trace("EXIT", moveResizeGeometry());
 }
 
 void Window::checkOffscreenPosition(QRectF *geom, const QRectF &screenArea)
