@@ -4113,6 +4113,14 @@ const QPointF X11Window::calculateGravitation(bool invert) const
 // co-ordinate are in kwin logical
 void X11Window::configureRequest(int value_mask, qreal rx, qreal ry, qreal rw, qreal rh, int gravity, bool from_tool)
 {
+    static const bool traceEnabled = qEnvironmentVariableIntValue("KWIN_WORKSPACE_POSITION_TRACE") == 1;
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE phase=CONFIGURE_REQUEST" << "win=" << this
+                << "windowId=" << window() << "mask=" << value_mask
+                << "x=" << rx << "y=" << ry << "width=" << rw << "height=" << rh
+                << "gravity=" << gravity << "fromTool=" << from_tool
+                << "requested=" << moveResizeGeometry() << "frame=" << frameGeometry();
+    }
     const int configurePositionMask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y;
     const int configureSizeMask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
     const int configureGeometryMask = configurePositionMask | configureSizeMask;
@@ -4543,6 +4551,15 @@ void X11Window::moveResizeInternal(const QRectF &rect, MoveResizeMode mode)
     }
     const QRectF bufferGeometry = nextFrameRectToBufferRect(frameGeometry);
     const qreal bufferScale = kwinApp()->xwaylandScale();
+
+    static const bool traceEnabled = qEnvironmentVariableIntValue("KWIN_WORKSPACE_POSITION_TRACE") == 1;
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE phase=X11_FRAME" << "win=" << this
+                << "windowId=" << window() << "mode=" << int(mode)
+                << "input=" << rect << "oldFrame=" << m_frameGeometry << "newFrame=" << frameGeometry
+                << "oldClient=" << m_clientGeometry << "newClient=" << clientGeometry
+                << "updatesBlocked=" << areGeometryUpdatesBlocked() << "shade=" << isShade();
+    }
 
     if (m_bufferGeometry == bufferGeometry && m_clientGeometry == clientGeometry && m_frameGeometry == frameGeometry && m_bufferScale == bufferScale) {
         return;

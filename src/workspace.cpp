@@ -2316,6 +2316,17 @@ void Workspace::scheduleRearrange()
 
 void Workspace::rearrange()
 {
+    static const bool traceEnabled = qEnvironmentVariableIntValue("KWIN_WORKSPACE_POSITION_TRACE") == 1;
+    static quint64 rearrangeCounter = 0;
+    const quint64 rearrangeId = traceEnabled ? ++rearrangeCounter : 0;
+    if (traceEnabled) {
+        qInfo() << "KWIN_GEOMETRY_TRACE phase=REARRANGE" << "rearrange=" << rearrangeId
+                << "root=" << m_geometry;
+        for (const Output *output : std::as_const(m_outputs)) {
+            qInfo() << "KWIN_GEOMETRY_TRACE phase=OUTPUT" << "rearrange=" << rearrangeId
+                    << "output=" << static_cast<const void *>(output) << "geometry=" << output->geometry();
+        }
+    }
     Q_EMIT aboutToRearrange();
     m_rearrangeTimer.stop();
 
@@ -2357,6 +2368,13 @@ void Workspace::rearrange()
         const QRect clientsScreenRect = window->output()->geometry();
         for (int i = strutRegion.size() - 1; i >= 0; --i) {
             const StrutRect clipped = StrutRect(strutRegion[i].intersected(clientsScreenRect), strutRegion[i].area());
+            if (traceEnabled) {
+                qInfo() << "KWIN_GEOMETRY_TRACE phase=PANEL_STRUT" << "rearrange=" << rearrangeId
+                        << "win=" << window << "screen=" << clientsScreenRect
+                        << "side=" << int(strutRegion[i].area())
+                        << "raw=" << static_cast<const QRect &>(strutRegion[i])
+                        << "clipped=" << static_cast<const QRect &>(clipped);
+            }
             if (clipped.isEmpty()) {
                 strutRegion.removeAt(i);
             } else {
